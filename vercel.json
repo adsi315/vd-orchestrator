@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "routes": [
+    {
+      "src": "/orchestrator",
+      "dest": "api/orchestrator.js",
+      "methods": ["POST"]
+    }
+  ]
+}
