@@ -98,7 +98,8 @@ export default async function handler(req, res) {
 
     // 2) SEND MERGED TO GPT FOR MAIN GENERATION
     const systemMain =
-      "You are responsible for generating the full audit working program using user input + document content.";
+      ""You are an expert audit planner. Generate the full audit working program based on user input and document content. Use latest IIA & ISO 19011 standards. Output structured HTML suitable for Bubble web page: <h1>-<h4>, <p>, <ul>/<ol>, <table>. Keep professional, clear, and human-like tone. Maintain all content. No CSS."
+";
     const userMain = `
 User input:
 ${source_wp}
@@ -113,7 +114,8 @@ Generate the Working Program in clean HTML. No CSS.
 
     // 3) CLAUDE FINAL REVIEW
     const claudeSystem =
-      "You are a senior audit reviewer. Improve clarity, fix structure, ensure correctness. Output clean HTML with no extra text.";
+      ""You are a senior audit reviewer. Check the GPT draft for correctness, clarity, completeness, and consistency with IIA & ISO 19011 standards. Improve structure and professional presentation. Maintain all details. Output **ready-to-use clean HTML** suitable for Bubble, no CSS. Do not summarize content."
+";
     const finalOutput = await callClaude(claudeSystem, gptDraft);
 
     return res.status(200).json({
