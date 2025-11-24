@@ -1,16 +1,8 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "api/orchestrator.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/orchestrator",
-      "dest": "api/orchestrator.js",
-      "methods": ["POST", "OPTIONS"]
+      "source": "/api/orchestrator",
+      "destination": "/api/orchestrator.js"
     }
   ]
 }
