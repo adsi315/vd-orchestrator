@@ -26,18 +26,18 @@ function chunkText(text, max = 6000) {
 // ------------- GPT CALL ------------------------
 
 async function callGPT(system, user) {
-  const url = "https://api.openai.com/v1/chat/completions";
+  const url = "https://api.openai.com/v1/responses";
 
   const { data } = await axios.post(
     url,
     {
-      model: "gpt-4o-mini",
-      messages: [
+      model: "gpt-4-turbo-preview",
+      input: [
         { role: "system", content: system },
         { role: "user", content: user }
       ],
       temperature: 0.3,
-      max_tokens: 7000
+      max_output_tokens: 7000
     },
     {
       headers: { Authorization: `Bearer ${OPENAI_KEY}` }
