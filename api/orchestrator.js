@@ -28,20 +28,20 @@ function chunkText(text, max = 6000) {
 }
 
 // ------------- GPT CALL ------------------------
-async function callGPT(system, user) {
-  const url = "https://api.openai.com/v1/chat/completions"; // FIXED: Correct endpoint
+async function callGPT(system, user, maxTokens = 4000) {
+  const url = "https://api.openai.com/v1/chat/completions";
   
   try {
     const { data } = await axios.post(
       url,
       {
         model: "gpt-4-turbo-preview",
-        messages: [ // FIXED: Correct format
+        messages: [
           { role: "system", content: system },
           { role: "user", content: user }
         ],
         temperature: 0.3,
-        max_tokens: 7000 // FIXED: Correct parameter name
+        max_tokens: maxTokens // Made this a parameter
       },
       {
         headers: { 
@@ -66,8 +66,8 @@ async function callClaude(system, user) {
     const { data } = await axios.post(
       url,
       {
-        model: "claude-sonnet-4-20250514", // FIXED: Latest model
-        max_tokens: 16000, // FIXED: Increased for comprehensive output
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 16000,
         system: system,
         messages: [{ role: "user", content: user }]
       },
@@ -88,7 +88,7 @@ async function callClaude(system, user) {
 }
 
 // ------------- MAIN ORCHESTRATOR ---------------
-module.exports = async (req, res) => { // FIXED: CommonJS export for Vercel
+module.exports = async (req, res) => {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -116,7 +116,7 @@ module.exports = async (req, res) => { // FIXED: CommonJS export for Vercel
     }
 
     const doc = merged_text || "";
-    const chunks = doc.length > 10000 ? chunkText(doc) : [doc];
+    const chunks = doc.length > 10000 ? chunkText(doc, 8000) : [doc]; // Increased chunk size
 
     console.log(`Processing ${chunks.length} chunks...`);
 
@@ -128,67 +128,71 @@ module.exports = async (req, res) => { // FIXED: CommonJS export for Vercel
       const system = "You are a document preparation engine. Clean, structure, and clarify this section. Keep all content. Do not summarize.";
       const user = chunks[i];
       
-      const result = await callGPT(system, user);
+      // Use 3000 tokens for chunk processing (shorter outputs)
+      const result = await callGPT(system, user, 3000);
       processedChunks.push(result);
+      
+      // Small delay to avoid rate limits
+      if (i < chunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
 
     const merged = processedChunks.join("\n\n---\n\n");
     console.log("All chunks processed and merged");
 
     // 2) SEND MERGED TO GPT FOR MAIN GENERATION
-    const systemMain = `You are an expert audit planner. Generate the full audit working program based on user input and document content. Use latest IIA & ISO 19011 standards. 
+    const systemMain = `You are an expert audit planner specializing in internal audit and quality management systems. Generate comprehensive audit working programs based on user requirements and document content. Apply latest IIA Standards and ISO 19011:2018 guidelines.
 
-Output structured HTML suitable for web display:
-- Use <h1> for main title, <h2> for sections, <h3> for subsections
-- Use <p> for paragraphs
-- Use <ul>/<ol> for lists
-- Use <table> with <thead> and <tbody> for tabular data
-- Keep professional, clear, and human-like tone
-- Maintain all content - no summarization
-- NO CSS or style attributes
-- Use semantic HTML only`;
+Output Requirements:
+- Structure: Use HTML semantic tags (<h1>, <h2>, <h3>, <p>, <ul>, <ol>, <table>)
+- No CSS or inline styles
+- Professional audit documentation tone
+- Clear, actionable content
+- Maintain all substantive information
+- Include audit objectives, scope, procedures, criteria, resources, and timelines where applicable`;
 
-    const userMain = `# USER INPUT
+    const userMain = `# USER REQUIREMENTS
 ${source_wp}
 
-# PROCESSED DOCUMENT CONTENT
-${merged}
+# DOCUMENT CONTENT (Processed)
+${merged.substring(0, 25000)} 
 
-Generate the complete Audit Working Program in clean, semantic HTML. Structure it professionally with clear sections. No CSS.`;
+Generate a complete, professional Audit Working Program in clean HTML format. Structure it with clear sections covering all essential audit program elements.`;
 
     console.log("Generating GPT draft...");
-    const gptDraft = await callGPT(systemMain, userMain);
+    const gptDraft = await callGPT(systemMain, userMain, 4000); // Max allowed tokens
 
     // 3) CLAUDE FINAL REVIEW
-    const claudeSystem = `You are a senior audit reviewer with expertise in IIA Standards and ISO 19011. 
+    const claudeSystem = `You are a senior audit reviewer and quality assurance specialist with deep expertise in IIA International Standards for the Professional Practice of Internal Auditing and ISO 19011:2018 Guidelines for auditing management systems.
 
-Your task: Review and enhance the GPT-generated audit working program draft.
+Your mission: Conduct a comprehensive review and enhancement of the audit working program draft.
 
-Check for:
-- Correctness and accuracy
-- Clarity and professional presentation
-- Completeness (no missing elements)
-- Consistency with IIA & ISO 19011 standards
-- Proper structure and flow
-- Technical precision
+Review Criteria:
+✓ Technical Accuracy - Verify alignment with IIA Standards and ISO 19011
+✓ Completeness - Ensure all critical audit program elements are present
+✓ Clarity - Check for clear, unambiguous language
+✓ Structure - Assess logical flow and organization
+✓ Professionalism - Maintain audit documentation standards
+✓ Practicality - Ensure procedures are implementable
 
-Output requirements:
-- Ready-to-use clean HTML (semantic tags only)
-- NO CSS or inline styles
-- Maintain all details from the draft
-- Enhance structure and clarity where needed
+Output Requirements:
+- Clean HTML with semantic tags only (no CSS)
+- Enhanced structure and clarity
+- All substantive content preserved and improved
 - Professional audit documentation tone
-- Do NOT summarize or remove content
+- Production-ready for immediate use
+- Must include: objectives, scope, criteria, methodology, resources, timeline, reporting structure
 
-Deliver production-ready HTML suitable for direct web display.`;
+Do not summarize or remove content - enhance and refine it.`;
 
     const claudeUser = `# ORIGINAL USER REQUIREMENTS
 ${source_wp}
 
-# GPT DRAFT TO REVIEW
+# GPT DRAFT TO REVIEW AND ENHANCE
 ${gptDraft}
 
-Review this draft and provide the final, enhanced version in clean HTML. Fix any issues, improve clarity, ensure compliance with standards, but keep all substantive content.`;
+Conduct your comprehensive review and provide the final, production-ready audit working program in clean HTML. Enhance structure, fix any gaps, ensure compliance with standards, and deliver a professional document ready for immediate deployment.`;
 
     console.log("Sending to Claude for final review...");
     const finalOutput = await callClaude(claudeSystem, claudeUser);
@@ -199,8 +203,16 @@ Review this draft and provide the final, enhanced version in clean HTML. Fix any
       success: true,
       ai_output: finalOutput,
       ai_draft: gptDraft,
-      chunks_used: chunks.length,
-      timestamp: new Date().toISOString()
+      chunks_processed: chunks.length,
+      timestamp: new Date().toISOString(),
+      metadata: {
+        original_doc_length: doc.length,
+        processed_chunks: processedChunks.length,
+        model_used: {
+          processing: "gpt-4-turbo-preview",
+          review: "claude-sonnet-4-20250514"
+        }
+      }
     });
 
   } catch (err) {
