@@ -1,10 +1,16 @@
 {
   "version": 2,
-    "routes": [
+  "builds": [
     {
-      "src": "/orchestrator",
+      "src": "api/orchestrator.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/orchestrator",
       "dest": "api/orchestrator.js",
-      "methods": ["POST"]
+      "methods": ["POST", "OPTIONS"]
     }
   ]
 }
