@@ -29,19 +29,19 @@ function chunkText(text, max = 8000) {
 
 // ------------- GPT CALL ------------------------
 async function callGPT(system, user, maxTokens = 4000) {
-  const url = "https://api.openai.com/v1/chat/completions";
+  const url = "https://api.openai.com/v1/responses";
   
   try {
     const { data } = await axios.post(
       url,
       {
         model: "gpt-4-turbo-preview",
-        messages: [
+        input: [
           { role: "system", content: system },
           { role: "user", content: user }
         ],
         temperature: 0.3,
-        max_tokens: maxTokens
+        max_output_tokens: maxTokens
       },
       {
         headers: { 
