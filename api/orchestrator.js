@@ -87,23 +87,8 @@ async function callClaude(system, user) {
   }
 }
 
-// ------------- PARSE REQUEST BODY ---------------
-async function parseBody(req) {
-  // If body is already parsed (Vercel usually does this)
-  if (req.body && typeof req.body === 'object') {
-    return req.body;
-  }
-  
-  // If body is a string, parse it
-  if (typeof req.body === 'string') {
-    try {
-      return JSON.parse(req.body);
-    } catch (e) {
-      throw new Error('Invalid JSON in request body');
-    }
-  }
-  
-  // If body is raw buffer/stream (Bubble sometimes sends this way)
+// ------------- ROBUST BODY PARSER ---------------
+function getRawBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
     
@@ -112,22 +97,97 @@ async function parseBody(req) {
     });
     
     req.on('end', () => {
-      try {
-        resolve(data ? JSON.parse(data) : {});
-      } catch (e) {
-        reject(new Error('Invalid JSON in request body'));
-      }
+      resolve(data);
     });
     
     req.on('error', reject);
+    
+    // Timeout after 10 seconds
+    setTimeout(() => reject(new Error('Body read timeout')), 10000);
   });
+}
+
+async function parseRequestBody(req) {
+  console.log('=== Request Debug Info ===');
+  console.log('Method:', req.method);
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('Body type (initial):', typeof req.body);
+  
+  try {
+    // Case 1: Body already parsed as object (Vercel default)
+    if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+      console.log('Body already parsed as object');
+      console.log('Keys:', Object.keys(req.body));
+      return req.body;
+    }
+    
+    // Case 2: Body is a string
+    if (typeof req.body === 'string' && req.body.trim()) {
+      console.log('Body is string, length:', req.body.length);
+      try {
+        const parsed = JSON.parse(req.body);
+        console.log('Successfully parsed string body');
+        return parsed;
+      } catch (e) {
+        console.log('String body is not valid JSON');
+        // Maybe it's URL-encoded?
+        if (req.body.includes('=')) {
+          const params = new URLSearchParams(req.body);
+          const result = {};
+          for (const [key, value] of params) {
+            result[key] = value;
+          }
+          console.log('Parsed as URL-encoded:', Object.keys(result));
+          return result;
+        }
+        throw new Error('Body is string but not valid JSON or URL-encoded');
+      }
+    }
+    
+    // Case 3: Body is buffer or needs to be read from stream
+    console.log('Attempting to read raw body from stream...');
+    const rawBody = await getRawBody(req);
+    console.log('Raw body length:', rawBody.length);
+    console.log('Raw body preview:', rawBody.substring(0, 200));
+    
+    if (!rawBody || rawBody.trim() === '') {
+      console.log('Empty body received');
+      return {};
+    }
+    
+    // Try to parse as JSON
+    try {
+      const parsed = JSON.parse(rawBody);
+      console.log('Successfully parsed raw body as JSON');
+      return parsed;
+    } catch (e) {
+      console.log('Raw body parse error:', e.message);
+      
+      // Try URL-encoded
+      if (rawBody.includes('=')) {
+        const params = new URLSearchParams(rawBody);
+        const result = {};
+        for (const [key, value] of params) {
+          result[key] = value;
+        }
+        console.log('Parsed raw body as URL-encoded');
+        return result;
+      }
+      
+      throw new Error(`Unable to parse body. Preview: ${rawBody.substring(0, 100)}`);
+    }
+    
+  } catch (error) {
+    console.error('Body parsing error:', error);
+    throw error;
+  }
 }
 
 // ------------- MAIN ORCHESTRATOR ---------------
 module.exports = async (req, res) => {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   // Handle preflight
@@ -135,31 +195,58 @@ module.exports = async (req, res) => {
     return res.status(200).end();
   }
 
+  // Add GET for health check
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      status: 'ok',
+      message: 'Orchestrator API is running',
+      endpoint: '/api/orchestrator',
+      method_required: 'POST',
+      env_check: {
+        openai_key: !!OPENAI_KEY,
+        anthropic_key: !!ANTHROPIC_KEY
+      }
+    });
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ 
       error: 'Method not allowed',
-      received_method: req.method 
+      allowed_methods: ['POST', 'OPTIONS', 'GET']
+    });
+  }
+
+  let parsedBody;
+  
+  try {
+    parsedBody = await parseRequestBody(req);
+    console.log('Final parsed body keys:', Object.keys(parsedBody));
+    
+  } catch (parseError) {
+    console.error('Failed to parse request body:', parseError);
+    return res.status(400).json({
+      error: 'Invalid request format',
+      details: parseError.message,
+      help: 'Send POST request with Content-Type: application/json and body: {"source_wp":"...","merged_text":"..."}'
     });
   }
 
   try {
-    // Parse the request body properly
-    const body = await parseBody(req);
-    console.log("Received body:", JSON.stringify(body).substring(0, 200));
-
-    const { source_wp, merged_text } = body;
+    const { source_wp, merged_text } = parsedBody;
 
     // Validation
     if (!source_wp) {
       return res.status(400).json({ 
-        error: "source_wp is required",
-        received_fields: Object.keys(body)
+        error: "source_wp field is required",
+        received_fields: Object.keys(parsedBody),
+        help: 'Body should include: {"source_wp":"your requirements","merged_text":"optional document"}'
       });
     }
 
     if (!OPENAI_KEY || !ANTHROPIC_KEY) {
       return res.status(500).json({ 
-        error: "API keys not configured on server" 
+        error: "API keys not configured on server",
+        help: "Set OPENAI_API_KEY and ANTHROPIC_API_KEY in Vercel environment variables"
       });
     }
 
@@ -268,7 +355,6 @@ Conduct your comprehensive review and provide the final, production-ready audit 
     return res.status(500).json({ 
       error: "Internal processing error", 
       details: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
       timestamp: new Date().toISOString()
     });
   }
