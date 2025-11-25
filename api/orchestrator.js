@@ -1,11 +1,11 @@
 const axios = require('axios');
 
-// ENV VARS — set these in Vercel dashboard
+// ENV VARS
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 // ------------- CHUNKING UTILS ------------------
-function chunkText(text, max = 6000) {
+function chunkText(text, max = 8000) {
   const sentences = text.split(/(?<=[.!?])\s+/);
   let chunks = [];
   let current = "";
@@ -41,7 +41,7 @@ async function callGPT(system, user, maxTokens = 4000) {
           { role: "user", content: user }
         ],
         temperature: 0.3,
-        max_tokens: maxTokens // Made this a parameter
+        max_tokens: maxTokens
       },
       {
         headers: { 
@@ -87,12 +87,48 @@ async function callClaude(system, user) {
   }
 }
 
+// ------------- PARSE REQUEST BODY ---------------
+async function parseBody(req) {
+  // If body is already parsed (Vercel usually does this)
+  if (req.body && typeof req.body === 'object') {
+    return req.body;
+  }
+  
+  // If body is a string, parse it
+  if (typeof req.body === 'string') {
+    try {
+      return JSON.parse(req.body);
+    } catch (e) {
+      throw new Error('Invalid JSON in request body');
+    }
+  }
+  
+  // If body is raw buffer/stream (Bubble sometimes sends this way)
+  return new Promise((resolve, reject) => {
+    let data = '';
+    
+    req.on('data', chunk => {
+      data += chunk.toString();
+    });
+    
+    req.on('end', () => {
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch (e) {
+        reject(new Error('Invalid JSON in request body'));
+      }
+    });
+    
+    req.on('error', reject);
+  });
+}
+
 // ------------- MAIN ORCHESTRATOR ---------------
 module.exports = async (req, res) => {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   // Handle preflight
   if (req.method === 'OPTIONS') {
@@ -100,27 +136,39 @@ module.exports = async (req, res) => {
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ 
+      error: 'Method not allowed',
+      received_method: req.method 
+    });
   }
 
   try {
-    const { source_wp, merged_text } = req.body;
+    // Parse the request body properly
+    const body = await parseBody(req);
+    console.log("Received body:", JSON.stringify(body).substring(0, 200));
+
+    const { source_wp, merged_text } = body;
 
     // Validation
     if (!source_wp) {
-      return res.status(400).json({ error: "source_wp is required" });
+      return res.status(400).json({ 
+        error: "source_wp is required",
+        received_fields: Object.keys(body)
+      });
     }
 
     if (!OPENAI_KEY || !ANTHROPIC_KEY) {
-      return res.status(500).json({ error: "API keys not configured" });
+      return res.status(500).json({ 
+        error: "API keys not configured on server" 
+      });
     }
 
     const doc = merged_text || "";
-    const chunks = doc.length > 10000 ? chunkText(doc, 8000) : [doc]; // Increased chunk size
+    const chunks = doc.length > 10000 ? chunkText(doc, 8000) : [doc];
 
     console.log(`Processing ${chunks.length} chunks...`);
 
-    // 1) PROCESS ALL CHUNKS THROUGH GPT
+    // 1) PROCESS CHUNKS THROUGH GPT
     let processedChunks = [];
     for (let i = 0; i < chunks.length; i++) {
       console.log(`Processing chunk ${i + 1}/${chunks.length}`);
@@ -128,11 +176,10 @@ module.exports = async (req, res) => {
       const system = "You are a document preparation engine. Clean, structure, and clarify this section. Keep all content. Do not summarize.";
       const user = chunks[i];
       
-      // Use 3000 tokens for chunk processing (shorter outputs)
       const result = await callGPT(system, user, 3000);
       processedChunks.push(result);
       
-      // Small delay to avoid rate limits
+      // Rate limiting
       if (i < chunks.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
@@ -141,7 +188,7 @@ module.exports = async (req, res) => {
     const merged = processedChunks.join("\n\n---\n\n");
     console.log("All chunks processed and merged");
 
-    // 2) SEND MERGED TO GPT FOR MAIN GENERATION
+    // 2) GPT MAIN GENERATION
     const systemMain = `You are an expert audit planner specializing in internal audit and quality management systems. Generate comprehensive audit working programs based on user requirements and document content. Apply latest IIA Standards and ISO 19011:2018 guidelines.
 
 Output Requirements:
@@ -156,12 +203,12 @@ Output Requirements:
 ${source_wp}
 
 # DOCUMENT CONTENT (Processed)
-${merged.substring(0, 25000)} 
+${merged.substring(0, 25000)}
 
 Generate a complete, professional Audit Working Program in clean HTML format. Structure it with clear sections covering all essential audit program elements.`;
 
     console.log("Generating GPT draft...");
-    const gptDraft = await callGPT(systemMain, userMain, 4000); // Max allowed tokens
+    const gptDraft = await callGPT(systemMain, userMain, 4000);
 
     // 3) CLAUDE FINAL REVIEW
     const claudeSystem = `You are a senior audit reviewer and quality assurance specialist with deep expertise in IIA International Standards for the Professional Practice of Internal Auditing and ISO 19011:2018 Guidelines for auditing management systems.
@@ -221,6 +268,7 @@ Conduct your comprehensive review and provide the final, production-ready audit 
     return res.status(500).json({ 
       error: "Internal processing error", 
       details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
       timestamp: new Date().toISOString()
     });
   }
