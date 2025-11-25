@@ -29,19 +29,21 @@ function chunkText(text, max = 8000) {
 
 // ------------- GPT CALL ------------------------
 async function callGPT(system, user, maxTokens = 4000) {
-  const url = "https://api.openai.com/v1/responses";
+  const url = "https://api.openai.com/v1/chat/completions";
   
   try {
+    console.log('Calling GPT with max_tokens:', maxTokens);
+    
     const { data } = await axios.post(
       url,
       {
         model: "gpt-4-turbo-preview",
-        input: [
+        messages: [
           { role: "system", content: system },
           { role: "user", content: user }
         ],
         temperature: 0.3,
-        max_output_tokens: maxTokens
+        max_tokens: maxTokens
       },
       {
         headers: { 
@@ -51,10 +53,38 @@ async function callGPT(system, user, maxTokens = 4000) {
       }
     );
     
+    console.log('GPT Response structure:', {
+      has_choices: !!data.choices,
+      choices_length: data.choices?.length,
+      has_message: !!data.choices?.[0]?.message,
+      finish_reason: data.choices?.[0]?.finish_reason
+    });
+    
+    // Validate response structure
+    if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+      console.error('Invalid GPT response structure:', JSON.stringify(data, null, 2));
+      throw new Error('GPT returned invalid response structure');
+    }
+    
+    if (!data.choices[0].message || !data.choices[0].message.content) {
+      console.error('GPT choice missing message or content:', JSON.stringify(data.choices[0], null, 2));
+      throw new Error('GPT response missing message content');
+    }
+    
     return data.choices[0].message.content;
+    
   } catch (error) {
-    console.error("GPT Error:", error.response?.data || error.message);
-    throw new Error(`GPT call failed: ${error.response?.data?.error?.message || error.message}`);
+    console.error("GPT Error Details:");
+    console.error("- Status:", error.response?.status);
+    console.error("- Error data:", JSON.stringify(error.response?.data, null, 2));
+    console.error("- Message:", error.message);
+    
+    // Extract useful error message
+    const errorMessage = error.response?.data?.error?.message || 
+                        error.response?.data?.message || 
+                        error.message;
+    
+    throw new Error(`GPT call failed: ${errorMessage}`);
   }
 }
 
@@ -63,6 +93,8 @@ async function callClaude(system, user) {
   const url = "https://api.anthropic.com/v1/messages";
   
   try {
+    console.log('Calling Claude...');
+    
     const { data } = await axios.post(
       url,
       {
@@ -80,10 +112,37 @@ async function callClaude(system, user) {
       }
     );
     
+    console.log('Claude Response structure:', {
+      has_content: !!data.content,
+      content_length: data.content?.length,
+      first_content_type: data.content?.[0]?.type
+    });
+    
+    // Validate response structure
+    if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
+      console.error('Invalid Claude response structure:', JSON.stringify(data, null, 2));
+      throw new Error('Claude returned invalid response structure');
+    }
+    
+    if (!data.content[0].text) {
+      console.error('Claude content missing text:', JSON.stringify(data.content[0], null, 2));
+      throw new Error('Claude response missing text content');
+    }
+    
     return data.content[0].text;
+    
   } catch (error) {
-    console.error("Claude Error:", error.response?.data || error.message);
-    throw new Error(`Claude call failed: ${error.response?.data?.error?.message || error.message}`);
+    console.error("Claude Error Details:");
+    console.error("- Status:", error.response?.status);
+    console.error("- Error data:", JSON.stringify(error.response?.data, null, 2));
+    console.error("- Message:", error.message);
+    
+    // Extract useful error message
+    const errorMessage = error.response?.data?.error?.message || 
+                        error.response?.data?.message || 
+                        error.message;
+    
+    throw new Error(`Claude call failed: ${errorMessage}`);
   }
 }
 
@@ -102,7 +161,6 @@ function getRawBody(req) {
     
     req.on('error', reject);
     
-    // Timeout after 10 seconds
     setTimeout(() => reject(new Error('Body read timeout')), 10000);
   });
 }
@@ -114,7 +172,7 @@ async function parseRequestBody(req) {
   console.log('Body type (initial):', typeof req.body);
   
   try {
-    // Case 1: Body already parsed as object (Vercel default)
+    // Case 1: Body already parsed as object
     if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
       console.log('Body already parsed as object');
       console.log('Keys:', Object.keys(req.body));
@@ -130,7 +188,6 @@ async function parseRequestBody(req) {
         return parsed;
       } catch (e) {
         console.log('String body is not valid JSON');
-        // Maybe it's URL-encoded?
         if (req.body.includes('=')) {
           const params = new URLSearchParams(req.body);
           const result = {};
@@ -144,7 +201,7 @@ async function parseRequestBody(req) {
       }
     }
     
-    // Case 3: Body is buffer or needs to be read from stream
+    // Case 3: Read from stream
     console.log('Attempting to read raw body from stream...');
     const rawBody = await getRawBody(req);
     console.log('Raw body length:', rawBody.length);
@@ -155,7 +212,6 @@ async function parseRequestBody(req) {
       return {};
     }
     
-    // Try to parse as JSON
     try {
       const parsed = JSON.parse(rawBody);
       console.log('Successfully parsed raw body as JSON');
@@ -163,7 +219,6 @@ async function parseRequestBody(req) {
     } catch (e) {
       console.log('Raw body parse error:', e.message);
       
-      // Try URL-encoded
       if (rawBody.includes('=')) {
         const params = new URLSearchParams(rawBody);
         const result = {};
@@ -190,12 +245,10 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // Add GET for health check
   if (req.method === 'GET') {
     return res.status(200).json({
       status: 'ok',
@@ -203,8 +256,10 @@ module.exports = async (req, res) => {
       endpoint: '/api/orchestrator',
       method_required: 'POST',
       env_check: {
-        openai_key: !!OPENAI_KEY,
-        anthropic_key: !!ANTHROPIC_KEY
+        openai_key_exists: !!OPENAI_KEY,
+        openai_key_format: OPENAI_KEY ? `${OPENAI_KEY.substring(0, 7)}...` : 'missing',
+        anthropic_key_exists: !!ANTHROPIC_KEY,
+        anthropic_key_format: ANTHROPIC_KEY ? `${ANTHROPIC_KEY.substring(0, 7)}...` : 'missing'
       }
     });
   }
@@ -218,62 +273,85 @@ module.exports = async (req, res) => {
 
   let parsedBody;
   
-  try {
-    parsedBody = await parseRequestBody(req);
-    console.log('Final parsed body keys:', Object.keys(parsedBody));
-    
-  } catch (parseError) {
-    console.error('Failed to parse request body:', parseError);
-    return res.status(400).json({
-      error: 'Invalid request format',
-      details: parseError.message,
-      help: 'Send POST request with Content-Type: application/json and body: {"source_wp":"...","merged_text":"..."}'
-    });
+  // Support query parameters as fallback
+  if (req.query && (req.query.source_wp || Object.keys(req.query).length > 0)) {
+    console.log('Using query parameters');
+    parsedBody = {
+      source_wp: req.query.source_wp || '',
+      merged_text: req.query.merged_text || ''
+    };
+  } else {
+    try {
+      parsedBody = await parseRequestBody(req);
+      console.log('Final parsed body keys:', Object.keys(parsedBody));
+    } catch (parseError) {
+      console.error('Failed to parse request body:', parseError);
+      return res.status(400).json({
+        error: 'Invalid request format',
+        details: parseError.message,
+        help: 'Send POST with JSON body: {"source_wp":"...","merged_text":"..."}'
+      });
+    }
   }
 
   try {
     const { source_wp, merged_text } = parsedBody;
 
     // Validation
-    if (!source_wp) {
+    if (!source_wp || source_wp.trim() === '') {
       return res.status(400).json({ 
-        error: "source_wp field is required",
+        error: "source_wp field is required and cannot be empty",
         received_fields: Object.keys(parsedBody),
-        help: 'Body should include: {"source_wp":"your requirements","merged_text":"optional document"}'
+        received_source_wp: source_wp
       });
     }
 
-    if (!OPENAI_KEY || !ANTHROPIC_KEY) {
+    // Check API keys
+    if (!OPENAI_KEY || !OPENAI_KEY.startsWith('sk-')) {
       return res.status(500).json({ 
-        error: "API keys not configured on server",
-        help: "Set OPENAI_API_KEY and ANTHROPIC_API_KEY in Vercel environment variables"
+        error: "OpenAI API key not configured correctly",
+        help: "Set OPENAI_API_KEY in Vercel environment variables (should start with 'sk-')"
       });
     }
+
+    if (!ANTHROPIC_KEY || !ANTHROPIC_KEY.startsWith('sk-ant-')) {
+      return res.status(500).json({ 
+        error: "Anthropic API key not configured correctly",
+        help: "Set ANTHROPIC_API_KEY in Vercel environment variables (should start with 'sk-ant-')"
+      });
+    }
+
+    console.log('=== Starting Processing ===');
+    console.log('Source WP length:', source_wp.length);
+    console.log('Merged text length:', merged_text?.length || 0);
 
     const doc = merged_text || "";
     const chunks = doc.length > 10000 ? chunkText(doc, 8000) : [doc];
 
-    console.log(`Processing ${chunks.length} chunks...`);
+    console.log(`Processing ${chunks.length} chunk(s)...`);
 
     // 1) PROCESS CHUNKS THROUGH GPT
     let processedChunks = [];
-    for (let i = 0; i < chunks.length; i++) {
-      console.log(`Processing chunk ${i + 1}/${chunks.length}`);
-      
-      const system = "You are a document preparation engine. Clean, structure, and clarify this section. Keep all content. Do not summarize.";
-      const user = chunks[i];
-      
-      const result = await callGPT(system, user, 3000);
-      processedChunks.push(result);
-      
-      // Rate limiting
-      if (i < chunks.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+    
+    if (doc && doc.length > 0) {
+      for (let i = 0; i < chunks.length; i++) {
+        console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`);
+        
+        const system = "You are a document preparation engine. Clean, structure, and clarify this section. Keep all content. Do not summarize.";
+        const user = chunks[i];
+        
+        const result = await callGPT(system, user, 3000);
+        processedChunks.push(result);
+        
+        // Rate limiting
+        if (i < chunks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
     }
 
-    const merged = processedChunks.join("\n\n---\n\n");
-    console.log("All chunks processed and merged");
+    const merged = processedChunks.length > 0 ? processedChunks.join("\n\n---\n\n") : "";
+    console.log("Chunks processed. Merged length:", merged.length);
 
     // 2) GPT MAIN GENERATION
     const systemMain = `You are an expert audit planner specializing in internal audit and quality management systems. Generate comprehensive audit working programs based on user requirements and document content. Apply latest IIA Standards and ISO 19011:2018 guidelines.
@@ -286,16 +364,18 @@ Output Requirements:
 - Maintain all substantive information
 - Include audit objectives, scope, procedures, criteria, resources, and timelines where applicable`;
 
-    const userMain = `# USER REQUIREMENTS
-${source_wp}
+    const documentSection = merged.length > 0 ? 
+      `\n\n# DOCUMENT CONTENT (Processed)\n${merged.substring(0, 25000)}` : 
+      '';
 
-# DOCUMENT CONTENT (Processed)
-${merged.substring(0, 25000)}
+    const userMain = `# USER REQUIREMENTS
+${source_wp}${documentSection}
 
 Generate a complete, professional Audit Working Program in clean HTML format. Structure it with clear sections covering all essential audit program elements.`;
 
-    console.log("Generating GPT draft...");
+    console.log("Generating GPT main draft...");
     const gptDraft = await callGPT(systemMain, userMain, 4000);
+    console.log("GPT draft generated. Length:", gptDraft.length);
 
     // 3) CLAUDE FINAL REVIEW
     const claudeSystem = `You are a senior audit reviewer and quality assurance specialist with deep expertise in IIA International Standards for the Professional Practice of Internal Auditing and ISO 19011:2018 Guidelines for auditing management systems.
@@ -330,8 +410,9 @@ Conduct your comprehensive review and provide the final, production-ready audit 
 
     console.log("Sending to Claude for final review...");
     const finalOutput = await callClaude(claudeSystem, claudeUser);
+    console.log("Claude review complete. Length:", finalOutput.length);
 
-    console.log("Process complete!");
+    console.log("=== Process Complete ===");
 
     return res.status(200).json({
       success: true,
@@ -350,7 +431,9 @@ Conduct your comprehensive review and provide the final, production-ready audit 
     });
 
   } catch (err) {
-    console.error("Orchestrator Error:", err);
+    console.error("=== Orchestrator Error ===");
+    console.error("Error:", err.message);
+    console.error("Stack:", err.stack);
     
     return res.status(500).json({ 
       error: "Internal processing error", 
