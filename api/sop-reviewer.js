@@ -67,7 +67,7 @@ async function callGPT(system, user) {
         { role: "user", content: user }
       ],
       temperature: 0.2,
-      max_tokens: 12000
+      max_tokens: 4000  // ✅ Fixed
     },
     { 
       headers: { 
@@ -94,8 +94,8 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    const user_inputs = req.body?.user_inputs || '';  // User's review criteria/requirements
-    const document_text = req.body?.document_text || '';  // Full SOP document text
+    const user_inputs = req.body?.user_inputs || '';
+    const document_text = req.body?.document_text || '';
 
     console.log('=== SOP REVIEWER REQUEST ===');
     console.log('user_inputs length:', user_inputs.length);
@@ -123,74 +123,107 @@ module.exports = async (req, res) => {
     for (let i = 0; i < chunks.length; i++) {
       console.log(`Claude processing chunk ${i + 1}/${chunks.length}`);
       
-      const system = `You are an expert SOP (Standard Operating Procedure) reviewer with deep knowledge of:
+      const system = `You are an expert SOP (Standard Operating Procedure) and regulatory compliance reviewer with deep expertise in:
 - ISO 9001:2015 Quality Management Systems
 - ISO 13485:2016 Medical Devices QMS
-- FDA 21 CFR Part 11 (if applicable)
+- FDA 21 CFR Part 11 Electronic Records
 - EU GMP Guidelines
-- Industry best practices
+- Industry best practices across pharmaceutical, manufacturing, healthcare sectors
 
-Review document sections for:
-✓ Clarity and completeness
-✓ Compliance with standards
-✓ Process effectiveness
-✓ Risk identification
-✓ Consistency and accuracy
+Your role: Conduct comprehensive, systematic reviews of SOPs with precision and professionalism.
 
-Provide detailed, constructive feedback with specific improvement recommendations.`;
+Analyze through multiple lenses:
+✓ Regulatory Compliance - alignment with applicable standards
+✓ Operational Clarity - clear, unambiguous procedures
+✓ Risk Management - identification of potential issues
+✓ Process Effectiveness - practical implementability
+✓ Documentation Quality - completeness and consistency
 
-      const user = `USER REVIEW CRITERIA:\n${user_inputs}\n\nDOCUMENT SECTION:\n${chunks[i]}\n\nProvide detailed review of this section.`;
+Provide detailed, constructive, actionable feedback with specific improvement recommendations.`;
+
+      const user = `REVIEW CRITERIA & REQUIREMENTS:
+${user_inputs}
+
+DOCUMENT SECTION TO REVIEW:
+${chunks[i]}
+
+Provide comprehensive review of this section with specific findings and recommendations.`;
       
       const result = await callClaude(system, user);
       processedChunks.push(result);
       
       if (i < chunks.length - 1) {
-        await new Promise(r => setTimeout(r, 800));  // Rate limiting
+        await new Promise(r => setTimeout(r, 800));
       }
     }
 
     // Combine all chunk reviews
-    const claudeFullReview = processedChunks.join("\n\n---\n\n");
-    console.log('All chunks reviewed by Claude. Combined length:', claudeFullReview.length);
+    const claudePrimaryReview = processedChunks.join("\n\n═══════════════════════════════════════════════════\n\n");
+    console.log('All chunks reviewed by Claude. Combined length:', claudePrimaryReview.length);
 
     // Send to GPT for QA review
     console.log('=== Sending to GPT for QA Review ===');
     
-    const gptSystem = `You are a Senior Quality Assurance Reviewer specializing in regulatory compliance and technical documentation.
+    const gptSystem = `You are a Senior Quality Assurance Reviewer specializing in regulatory compliance and technical documentation auditing.
 
-Your role: Perform rigorous secondary review (QA/QC) of the primary SOP analysis.
+Your expertise spans ISO standards, FDA regulations, EU GMP, and international quality management systems.
 
-Verify:
-✓ Accuracy of findings
-✓ Completeness - identify any missed issues
-✓ Consistency of recommendations
-✓ Regulatory precision
-✓ Actionability of suggestions
+Your role: Perform rigorous secondary review (QA/QC) of primary SOP analyses. Verify accuracy, identify oversights, assess consistency, and ensure recommendations meet international professional standards.
 
-Provide:
-- Verification of accurate findings
-- Additional issues not identified in primary review
-- Corrections for any inaccuracies
-- Enhanced recommendations
-- Overall quality assessment`;
+Approach reviews with:
+- Critical analytical thinking
+- Deep regulatory knowledge
+- Attention to technical precision
+- Zero tolerance for inaccuracies
+- Commitment to audit-grade quality assurance
 
-    const gptUser = `ORIGINAL USER REQUIREMENTS:\n${user_inputs}\n\nORIGINAL DOCUMENT:\n${document_text.substring(0, 30000)}\n\nCLAUDE PRIMARY REVIEW:\n${claudeFullReview}\n\nProvide comprehensive QA review identifying gaps, confirming accurate findings, and suggesting enhancements.`;
+Review Protocol:
+✓ ACCURACY VERIFICATION - Confirm all findings are factually correct
+✓ COMPLETENESS ASSESSMENT - Identify overlooked issues
+✓ CONSISTENCY CHECK - Ensure internal logic and coherence
+✓ REGULATORY PRECISION - Validate compliance analysis
+✓ ENHANCEMENT - Add value beyond validation
 
-    const gptQAReview = await callGPT(gptSystem, gptUser);
+Provide independent verification that adds a critical safety layer to document reviews.`;
+
+    const gptUser = `ORIGINAL REVIEW REQUIREMENTS:
+${user_inputs}
+
+ORIGINAL SOP DOCUMENT:
+${document_text.substring(0, 30000)}
+
+CLAUDE PRIMARY REVIEW TO QA:
+${claudePrimaryReview}
+
+Perform comprehensive QA review:
+1. Verify accurate findings
+2. Identify any missed critical issues
+3. Flag inaccuracies or inconsistencies
+4. Provide additional recommendations
+5. Assess overall review quality
+6. Deliver final determination: APPROVED / APPROVED WITH REVISIONS / REQUIRES REWORK
+
+Provide actionable, professional QA assessment.`;
+
+    const gptFinalReview = await callGPT(gptSystem, gptUser);
     
-    console.log('GPT QA review complete. Length:', gptQAReview.length);
+    console.log('GPT QA review complete. Length:', gptFinalReview.length);
     console.log('=== PROCESS COMPLETE ===');
 
     return res.status(200).json({
       success: true,
-      claude_primary_review: claudeFullReview,
-      gpt_qa_review: gptQAReview,
+      ai_draft: claudePrimaryReview,   // ✅ Claude primary review
+      ai_output: gptFinalReview,       // ✅ GPT final QA review
       chunks_processed: chunks.length,
       timestamp: new Date().toISOString(),
       metadata: {
         document_length: document_text.length,
         user_inputs_length: user_inputs.length,
-        total_chunks: chunks.length
+        total_chunks: chunks.length,
+        model_used: {
+          primary: "claude-sonnet-4-20250514",
+          qa_reviewer: "gpt-4-turbo-preview"
+        }
       }
     });
 
