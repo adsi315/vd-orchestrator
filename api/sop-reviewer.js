@@ -206,20 +206,3 @@ Provide verification, additional issues, corrections, and overall quality assess
     });
   }
 };
-```
-
----
-
-## **Fix Bubble API Connector (Same as Orchestrator)**
-
-**In Bubble → API Connector → sop_reviewer:**
-
-### **Critical Settings:**
-
-**Method:** POST
-
-**URL:** `https://vd-orchestrator.vercel.app/api/sop-reviewer`
-
-**Headers:**
-```
-Content-Type: application/json
