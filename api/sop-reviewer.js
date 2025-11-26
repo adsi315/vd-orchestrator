@@ -226,6 +226,21 @@ Provide actionable, professional QA assessment.`;
         }
       }
     });
+    
+module.exports = (req, res) => {
+  try {
+    if (req.method === "GET") {
+      return res.status(200).json({ status: "ok", method: "GET" });
+    }
+    if (req.method === "POST") {
+      // echo body back so we can see what Bubble sends
+      return res.status(200).json({ status: "ok", method: "POST", body: req.body || null });
+    }
+    return res.status(405).json({ error: "method not allowed" });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+};
 
   } catch (err) {
     console.error('=== ERROR ===');
