@@ -1,8 +1,8 @@
 {
-  "rewrites": [
-    {
-      "source": "/api/orchestrator",
-      "destination": "/api/orchestrator.js"
+  "functions": {
+    "api/**/*.js": {
+      "memory": 1024,
+      "maxDuration": 60
     }
-  ]
+  }
 }
