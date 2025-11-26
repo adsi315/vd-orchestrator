@@ -169,7 +169,7 @@ Verify:
 ✓ Regulatory precision
 ✓ Actionability
 
-Provide verification, additional issues, corrections, and overall quality assessment.`;
+Provide verification, additional issues, corrections, and overall quality assessment. Do not amend design of the primary SOP anaylsis, and issue with adjustments already fixed.`;
 
     const gptUser = `ORIGINAL REQUIREMENTS:\n${user_inputs}\n\nORIGINAL DOCUMENT:\n${document_text.substring(0, 30000)}\n\nCLAUDE PRIMARY REVIEW:\n${claudePrimaryReview}\n\nProvide comprehensive QA review.`;
 
