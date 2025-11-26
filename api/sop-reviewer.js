@@ -140,7 +140,7 @@ Analyze through multiple lenses:
 ✓ Process Effectiveness
 ✓ Documentation Quality
 
-Provide detailed, constructive, actionable feedback.`;
+Provide detailed, constructive, actionable feedback, in a well designed professional document.`;
 
       const user = `REVIEW CRITERIA:\n${user_inputs}\n\nDOCUMENT SECTION:\n${chunks[i]}\n\nProvide comprehensive review with specific findings and recommendations.`;
       
@@ -169,7 +169,7 @@ Verify:
 ✓ Regulatory precision
 ✓ Actionability
 
-Provide verification, additional issues, corrections, and overall quality assessment. Do not amend design of the primary SOP anaylsis, and issue with adjustments already fixed.`;
+Verify each finding (Verified/Partially/Not), list missed issues, give severity, actionable corrections, consistency check, regulatory precision notes, a quality score (0–100), and a prioritized 3-step roadmap. Preserve primary text verbatim; annotate with QA-IDs.`;
 
     const gptUser = `ORIGINAL REQUIREMENTS:\n${user_inputs}\n\nORIGINAL DOCUMENT:\n${document_text.substring(0, 30000)}\n\nCLAUDE PRIMARY REVIEW:\n${claudePrimaryReview}\n\nProvide comprehensive QA review.`;
 
