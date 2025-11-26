@@ -1,7 +1,6 @@
 {
   "name": "vd-orchestrator",
   "version": "1.0.0",
-  "main": "api/orchestrator.js",
   "scripts": {
     "start": "node api/orchestrator.js"
   },
