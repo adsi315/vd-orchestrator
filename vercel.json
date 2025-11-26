@@ -1,6 +1,10 @@
 {
   "functions": {
-    "api/**/*.js": {
+    "api/orchestrator.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "api/sop-reviewer.js": {
       "memory": 1024,
       "maxDuration": 60
     }
