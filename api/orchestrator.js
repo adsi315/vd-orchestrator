@@ -1,16 +1,42 @@
 // orchestrator.js
 const axios = require('axios');
+const pdfParse = require('pdf-parse');       // npm install pdf-parse
+const mammoth = require('mammoth');          // npm install mammoth
+const fs = require('fs');
 
 // ------------------ API KEYS ------------------
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 // ------------------ HELPERS ------------------
+
+// Extract text from PDF buffer
+async function extractPDF(buffer) {
+  try {
+    const data = await pdfParse(buffer);
+    return data.text;
+  } catch (err) {
+    console.error('PDF extraction failed', err);
+    return '';
+  }
+}
+
+// Extract text from Word .docx buffer
+async function extractWord(buffer) {
+  try {
+    const { value } = await mammoth.extractRawText({ buffer });
+    return value;
+  } catch (err) {
+    console.error('Word extraction failed', err);
+    return '';
+  }
+}
+
+// Chunk large text
 function chunkText(text, max = 8000) {
   const sentences = text.split(/(?<=[.!?])\s+/);
   let chunks = [];
   let current = "";
-
   for (const s of sentences) {
     if ((current + s).length > max) {
       if (current.trim()) chunks.push(current.trim());
@@ -22,6 +48,7 @@ function chunkText(text, max = 8000) {
   return chunks;
 }
 
+// Claude API call
 async function callClaude(system, user) {
   const { data } = await axios.post(
     "https://api.anthropic.com/v1/messages",
@@ -42,6 +69,7 @@ async function callClaude(system, user) {
   return data.content[0].text;
 }
 
+// GPT API call
 async function callGPT(system, user) {
   const { data } = await axios.post(
     "https://api.openai.com/v1/chat/completions",
@@ -73,37 +101,41 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    const {
-      uploaded_wp = "",          // Optional uploaded SOP
-      user_inputs = "",          // Optional manual input fields
-      dropdown_selections = {},  // Optional constraints
-      proceed_to_arg = false     // Populate ARG RG if true
-    } = req.body || {};
+    const { uploaded_file, user_inputs = "", dropdown_selections = {}, proceed_to_arg = false } = req.body || {};
 
-    if (!uploaded_wp && !user_inputs) {
-      return res.status(400).json({ error: "Provide at least uploaded_wp or user_inputs" });
+    let sourceText = user_inputs;
+
+    // ------------------ HANDLE FILE UPLOAD ------------------
+    if (uploaded_file) {
+      const { file_type, base64 } = uploaded_file; // expecting { file_type: 'pdf'|'word', base64: '...' }
+      const buffer = Buffer.from(base64, 'base64');
+      if (file_type === 'pdf') {
+        sourceText += "\n" + await extractPDF(buffer);
+      } else if (file_type === 'word') {
+        sourceText += "\n" + await extractWord(buffer);
+      }
     }
 
-    // ------------------ PREPARE DOCUMENT ------------------
-    const sourceText = uploaded_wp ? uploaded_wp : user_inputs;
+    if (!sourceText.trim()) return res.status(400).json({ error: "No valid text available to process." });
+
+    // ------------------ CHUNK TEXT ------------------
     const chunks = sourceText.length > 10000 ? chunkText(sourceText, 8000) : [sourceText];
     let generatedChunks = [];
 
     // ------------------ CLAUDE: Generate Audit Program ------------------
     for (let i = 0; i < chunks.length; i++) {
       const system = `You are an expert auditor and working paper author. 
-Your task: Convert the provided SOP text or user inputs into a professional, testable audit program.
-Focus on:
+Convert the text into a professional, testable audit program with:
 - Step-by-step audit procedures
 - Sample sizes where applicable
 - Responsible departments or roles
-- References to relevant policies, controls, or SOPs
+- References to relevant policies/SOPs
 - Clear, actionable, auditable content
-- Suitable for auditors, compliance, risk, QA, IC, and department heads
-Output in **structured HTML**, with headings, lists, and tables for clarity.`;
+- Suitable for auditors, QA, risk, IC, and department heads
+Output as HTML with headings, lists, and tables.`;
 
       const userPrompt = `
-Section ${i + 1} of ${chunks.length}:
+Section ${i+1} of ${chunks.length}:
 
 Text to convert:
 ${chunks[i]}
@@ -113,9 +145,9 @@ ${JSON.stringify(dropdown_selections)}
 
 Instructions:
 - Translate policies/procedures into testable audit steps
-- Include sample sizes, responsible departments, and references
-- Organize logically by department or control area
-- Maintain professional and clear format
+- Include sample sizes, responsible departments, references
+- Organize logically by department/control area
+- Maintain professional format
 `;
 
       const chunkResult = await callClaude(system, userPrompt);
@@ -126,14 +158,12 @@ Instructions:
 
     const generatedWP = generatedChunks.join("\n\n");
 
-    // ------------------ OPTIONAL: Generate ARG Repeating Group Procedures ------------------
+    // ------------------ GPT: Generate ARG RG JSON ------------------
     let argProcedures = [];
     if (proceed_to_arg) {
       const procSystem = `You are an expert auditor. Extract all testable audit procedures from this Working Paper for a Bubble repeating group.
-- Follow 5Cs: Criteria, Condition, Cause, Consequence, Conclusion
-- Each procedure must be actionable and clear
-- Return JSON array of objects {procedure: "...", sample_size: "...", department: "..."} or fallback to text list`;
-
+Return strictly JSON array following 5Cs: Criteria, Condition, Cause, Consequence, Conclusion.
+Example: [{"procedure":"...","sample_size":"...","department":"..."}]`;
       const procUser = `Working Paper:
 ${generatedWP}`;
 
@@ -142,15 +172,15 @@ ${generatedWP}`;
       try {
         argProcedures = JSON.parse(procResultRaw);
       } catch (err) {
-        console.warn("JSON parse failed, fallback to text array");
+        console.warn("JSON parse failed, fallback to line array");
         argProcedures = procResultRaw
-          .split(/\n/)
+          .split(/\r?\n/)
           .filter(line => line.trim())
           .map(line => ({ procedure: line.trim() }));
       }
     }
 
-    // ------------------ FORMAT FINAL HTML ------------------
+    // ------------------ FORMAT HTML ------------------
     const finalDocument = `
 <!DOCTYPE html>
 <html>
@@ -182,7 +212,6 @@ ${generatedWP.replace(/\n/g,"<br>")}
 </html>
 `;
 
-    // ------------------ RESPONSE ------------------
     return res.status(200).json({
       success: true,
       working_paper_raw: generatedWP,
