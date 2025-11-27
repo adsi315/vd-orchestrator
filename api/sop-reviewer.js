@@ -3,7 +3,6 @@ const axios = require('axios');
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
-// Chunking function
 function chunkText(text, max = 8000) {
   const sentences = text.split(/(?<=[.!?])\s+/);
   let chunks = [];
@@ -20,7 +19,6 @@ function chunkText(text, max = 8000) {
   return chunks;
 }
 
-// Claude call
 async function callClaude(system, user) {
   console.log('=== CLAUDE ===');
   
@@ -45,7 +43,6 @@ async function callClaude(system, user) {
   return data.content[0].text;
 }
 
-// GPT call
 async function callGPT(system, user) {
   console.log('=== GPT ===');
   
@@ -72,7 +69,6 @@ async function callGPT(system, user) {
   return data.choices[0].message.content;
 }
 
-// Main handler
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -102,29 +98,38 @@ module.exports = async (req, res) => {
 
     console.log(`${chunks.length} chunks`);
 
-    // Claude processes chunks
+    // REVIEWER 1: Claude processes chunks
     let processedChunks = [];
     for (let i = 0; i < chunks.length; i++) {
       console.log(`Chunk ${i + 1}/${chunks.length}`);
       
-      const system = `You are an expert SOP and regulatory compliance reviewer with expertise in ISO 9001, ISO 13485, FDA 21 CFR Part 11, and EU GMP.
+      const system = `You are Reviewer 1, an expert SOP and regulatory compliance reviewer with expertise in ISO 9001, ISO 13485, FDA 21 CFR Part 11, and EU GMP.
 
-Review this document section for:
-✓ Regulatory compliance
-✓ Operational clarity  
-✓ Risk management
-✓ Process effectiveness
-✓ Documentation quality
+Conduct comprehensive review of this document section.
 
-Provide detailed, actionable feedback with specific recommendations.`;
+Analyze for:
+✓ Regulatory Compliance - alignment with applicable standards
+✓ Operational Clarity - clear, unambiguous procedures
+✓ Risk Management - identification of potential issues
+✓ Process Effectiveness - practical implementability
+✓ Documentation Quality - completeness and consistency
 
-      const user = `REVIEW CRITERIA:
+Output format: Structured review using HTML tags for clarity:
+- Use <h3> for section headings
+- Use <p> for paragraphs
+- Use <ul> and <li> for lists
+- Use <strong> for emphasis
+- Use <table> if presenting tabular data
+
+Provide detailed, actionable findings and recommendations.`;
+
+      const user = `<strong>Review Criteria:</strong>
 ${user_inputs}
 
-DOCUMENT SECTION:
+<strong>Document Section ${i + 1} of ${chunks.length}:</strong>
 ${chunks[i]}
 
-Provide comprehensive review with findings and recommendations.`;
+Provide comprehensive review of this section.`;
       
       const result = await callClaude(system, user);
       processedChunks.push(result);
@@ -134,53 +139,215 @@ Provide comprehensive review with findings and recommendations.`;
       }
     }
 
-    const claudeReview = processedChunks.join("\n\n═══════════════════════════════════════════════════\n\n");
+    const claudeReview = processedChunks.join("\n\n");
     console.log('Claude total:', claudeReview.length);
 
-    // ✅ FIXED: GPT enhances the review (doesn't critique it)
-    console.log('GPT enhancing...');
+    // REVIEWER 2: GPT QA and additional findings
+    console.log('GPT review...');
     
-    const gptSystem = `You are a Senior Documentation Quality Editor specializing in regulatory compliance.
+    const gptSystem = `You are Reviewer 2, a Senior Quality Assurance Specialist conducting secondary review of SOP analysis.
 
-Your task: Take the SOP review below and produce an IMPROVED, FINAL VERSION of it.
+Your role: Review the primary analysis and provide:
+1. Verification of accurate findings
+2. Additional critical issues not identified
+3. Corrections for any inaccuracies or inconsistencies
+4. Enhanced recommendations
+5. Overall assessment and approval status
 
-What to do:
-✓ Keep all the findings and recommendations
-✓ Fix any errors or inconsistencies 
-✓ Add any critical issues that were overlooked
-✓ Improve the structure and clarity
-✓ Ensure professional tone and regulatory precision
-✓ Make it more actionable and complete
+Output format: Structured using HTML:
+- Use <h3> for section headings
+- Use <p> for paragraphs  
+- Use <ul> and <li> for lists
+- Use <strong> for emphasis
 
-What NOT to do:
-✗ Do not write a critique about the review
-✗ Do not list what was "good" or "bad" 
-✗ Do not write meta-commentary like "The review covered..." or "Missing from the analysis..."
+Sections to include:
+1. VERIFICATION - Confirmed accurate findings
+2. ADDITIONAL FINDINGS - Critical issues missed by Reviewer 1
+3. CORRECTIONS - Any inaccuracies identified
+4. ENHANCED RECOMMENDATIONS - Improved or additional suggestions
+5. OVERALL ASSESSMENT - Summary and approval status
 
-OUTPUT: The enhanced final SOP review document itself - seamless and ready for the user.`;
+Be specific and reference Reviewer 1's findings when verifying or correcting.`;
 
-    const gptUser = `Original user requirements:
+    const gptUser = `<strong>Original Review Requirements:</strong>
 ${user_inputs}
 
-Original SOP document:
+<strong>Original SOP Document (excerpt):</strong>
 ${document_text.substring(0, 30000)}
 
-Review to enhance:
+<strong>REVIEWER 1 ANALYSIS:</strong>
 ${claudeReview}
 
----
+Provide your comprehensive secondary review following the structured format specified.`;
 
-Produce the final, enhanced version of this SOP review. Output the review document directly (not commentary about it).`;
-
-    const finalReview = await callGPT(gptSystem, gptUser);
+    const gptReview = await callGPT(gptSystem, gptUser);
     
     console.log('=== DONE ===');
-    console.log('Final:', finalReview.length);
+
+    // Compile final professional document
+    const finalDocument = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f9f9f9;
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 10px;
+      margin-bottom: 30px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      margin: 0 0 10px 0;
+      font-size: 28px;
+    }
+    .header p {
+      margin: 5px 0;
+      opacity: 0.9;
+      font-size: 14px;
+    }
+    .review-section {
+      background: white;
+      padding: 30px;
+      margin-bottom: 25px;
+      border-radius: 10px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+    .reviewer-badge {
+      display: inline-block;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-weight: 600;
+      font-size: 13px;
+      margin-bottom: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .reviewer-1 {
+      background: #e3f2fd;
+      color: #1565c0;
+      border-left: 4px solid #1565c0;
+    }
+    .reviewer-2 {
+      background: #f3e5f5;
+      color: #6a1b9a;
+      border-left: 4px solid #6a1b9a;
+    }
+    h2 {
+      color: #2c3e50;
+      border-bottom: 3px solid #667eea;
+      padding-bottom: 10px;
+      margin-top: 0;
+      font-size: 22px;
+    }
+    h3 {
+      color: #34495e;
+      margin-top: 25px;
+      font-size: 18px;
+    }
+    p {
+      margin: 12px 0;
+      text-align: justify;
+    }
+    ul, ol {
+      margin: 15px 0;
+      padding-left: 25px;
+    }
+    li {
+      margin: 8px 0;
+    }
+    strong {
+      color: #2c3e50;
+      font-weight: 600;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      background: white;
+    }
+    th {
+      background: #667eea;
+      color: white;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    tr:hover {
+      background: #f5f5f5;
+    }
+    .criteria-box {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 5px;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding: 20px;
+      color: #7f8c8d;
+      font-size: 13px;
+      border-top: 1px solid #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>📋 SOP Dual Review Report</h1>
+    <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+    <p><strong>Review Type:</strong> Comprehensive Regulatory Compliance & Quality Assessment</p>
+    <p><strong>Document Size:</strong> ${Math.round(document_text.length / 1024)} KB | <strong>Sections Analyzed:</strong> ${chunks.length}</p>
+  </div>
+
+  <div class="criteria-box">
+    <strong>📌 Review Criteria Provided by User:</strong><br>
+    ${user_inputs.replace(/\n/g, '<br>')}
+  </div>
+
+  <div class="review-section reviewer-1">
+    <span class="reviewer-badge reviewer-1">👤 Reviewer 1 - Primary Analysis</span>
+    <h2>Primary Compliance & Quality Review</h2>
+    ${claudeReview}
+  </div>
+
+  <div class="review-section reviewer-2">
+    <span class="reviewer-badge reviewer-2">👤 Reviewer 2 - Secondary QA Review</span>
+    <h2>Quality Assurance & Verification</h2>
+    ${gptReview}
+  </div>
+
+  <div class="footer">
+    <p>This report was generated using dual AI reviewer system: Claude Sonnet 4 (Primary) & GPT-4 Turbo (QA)</p>
+    <p>Confidential Document - For Internal Use Only</p>
+  </div>
+
+</body>
+</html>
+`;
 
     return res.status(200).json({
       success: true,
-      ai_draft: claudeReview,
-      ai_output: finalReview,
+      ai_draft: claudeReview,  // Raw Claude review
+      ai_output: finalDocument,  // Formatted dual-review document
+      gpt_review: gptReview,  // Raw GPT review
       chunks_processed: chunks.length,
       timestamp: new Date().toISOString()
     });
@@ -188,7 +355,6 @@ Produce the final, enhanced version of this SOP review. Output the review docume
   } catch (err) {
     console.error('=== ERROR ===');
     console.error(err.message);
-    console.error(err.response?.data);
     
     return res.status(500).json({ 
       error: err.message,
