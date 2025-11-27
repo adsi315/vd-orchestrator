@@ -74,10 +74,10 @@ module.exports = async (req, res) => {
 
   try {
     const {
-      uploaded_wp = "",         // optional uploaded working paper
-      user_inputs = "",         // optional user text fields
-      dropdown_selections = {}, // optional dropdowns or selections
-      proceed_to_arg = false    // flag: whether to generate procedures for ARG
+      uploaded_wp = "",         
+      user_inputs = "",         
+      dropdown_selections = {}, 
+      proceed_to_arg = false    
     } = req.body || {};
 
     if (!uploaded_wp && !user_inputs) {
@@ -121,19 +121,22 @@ Incorporate optional user inputs or dropdown selections if provided.`;
       const procSystem = `You are an expert auditor. Extract all audit procedures from this Working Paper for a Bubble repeating group.
 - Keep each procedure actionable
 - Follow the 5Cs: Criteria, Condition, Cause, Consequence, Conclusion
-- Return JSON array`;
+- Return either strict JSON or a plain text list if JSON fails.`;
       const procUser = `
         Working Paper:
         ${generatedWP}
       `;
       const procResultRaw = await callGPT(procSystem, procUser);
 
-      // Attempt JSON parse
+      // Use SOP reviewer-style safe parsing
       try {
         argProcedures = JSON.parse(procResultRaw);
       } catch (err) {
-        console.error("ARG procedures parse error:", err.message);
-        argProcedures = []; // fallback empty
+        console.warn("JSON parse failed, fallback to text array");
+        argProcedures = procResultRaw
+          .split(/\n/)
+          .filter(line => line.trim())
+          .map(line => ({ procedure: line.trim() }));
       }
     }
 
