@@ -3,8 +3,8 @@ const axios = require('axios');
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
-// Chunking function
-function chunkText(text, max = 8000) {
+// Optimized chunking - smaller chunks = faster processing
+function chunkText(text, max = 5000) {  // ✅ Reduced from 8000 to 5000
   const sentences = text.split(/(?<=[.!?])\s+/);
   let chunks = [];
   let current = "";
@@ -20,15 +20,12 @@ function chunkText(text, max = 8000) {
   return chunks;
 }
 
-// Claude call (Primary reviewer)
 async function callClaude(system, user) {
-  console.log('=== CLAUDE (Primary) ===');
-  
   const { data } = await axios.post(
     "https://api.anthropic.com/v1/messages",
     {
       model: "claude-sonnet-4-20250514",
-      max_tokens: 16000,
+      max_tokens: 8000,  // ✅ Reduced from 16000 for faster responses
       system: system,
       messages: [{ role: "user", content: user }]
     },
@@ -40,15 +37,10 @@ async function callClaude(system, user) {
       }
     }
   );
-  
-  console.log('Claude response length:', data.content[0].text.length);
   return data.content[0].text;
 }
 
-// GPT call (QA reviewer)
 async function callGPT(system, user) {
-  console.log('=== GPT (QA) ===');
-  
   const { data } = await axios.post(
     "https://api.openai.com/v1/chat/completions",
     {
@@ -67,12 +59,9 @@ async function callGPT(system, user) {
       }
     }
   );
-  
-  console.log('GPT response length:', data.choices[0].message.content.length);
   return data.choices[0].message.content;
 }
 
-// Main handler
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -82,127 +71,96 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    // Get data - handle multiple formats from Bubble
-    let user_inputs = '';
-    let document_text = '';
+    const user_inputs = req.body?.user_inputs || '';
+    const document_text = req.body?.document_text || '';
 
-    console.log('=== Request Info ===');
-    console.log('Content-Type:', req.headers['content-type']);
-    console.log('Body type:', typeof req.body);
-    console.log('Body keys:', req.body ? Object.keys(req.body) : 'none');
-
-    // Try to extract data from body (Vercel auto-parses most formats)
-    if (req.body && typeof req.body === 'object') {
-      user_inputs = req.body.user_inputs || '';
-      document_text = req.body.document_text || '';
-      console.log('Got data from parsed body object');
-    }
-
-    console.log('Final values:');
-    console.log('- user_inputs length:', user_inputs?.length || 0);
-    console.log('- document_text length:', document_text?.length || 0);
+    console.log('=== SOP Review Start ===');
+    console.log('Document length:', document_text.length);
 
     if (!user_inputs || !document_text) {
       return res.status(400).json({ 
-        error: 'Both user_inputs and document_text are required',
-        received: {
-          has_user_inputs: !!user_inputs,
-          has_document_text: !!document_text,
-          user_inputs_length: user_inputs?.length || 0,
-          document_text_length: document_text?.length || 0
-        }
+        error: 'Both user_inputs and document_text required'
       });
     }
 
-    // Chunk the document
-    const chunks = document_text.length > 10000 
-      ? chunkText(document_text, 8000) 
-      : [document_text];
+    // ✅ Limit document size to prevent timeout
+    const maxDocLength = 40000;  // ~40KB of text (8-10 pages)
+    const truncatedDoc = document_text.length > maxDocLength 
+      ? document_text.substring(0, maxDocLength) + "\n\n[Document truncated for processing]"
+      : document_text;
+
+    // Chunk if needed
+    const chunks = truncatedDoc.length > 10000 
+      ? chunkText(truncatedDoc, 5000)  // Smaller chunks
+      : [truncatedDoc];
 
     console.log(`Processing ${chunks.length} chunk(s)...`);
 
-    // Process each chunk through Claude (Primary)
+    // ✅ Process only first 5 chunks to stay under 60 seconds
+    const chunksToProcess = chunks.slice(0, 5);
+    
+    if (chunks.length > 5) {
+      console.log(`Warning: Document has ${chunks.length} chunks, processing first 5 only`);
+    }
+
+    // Process chunks through Claude
     let processedChunks = [];
-    for (let i = 0; i < chunks.length; i++) {
-      console.log(`Chunk ${i + 1}/${chunks.length}`);
+    for (let i = 0; i < chunksToProcess.length; i++) {
+      console.log(`Chunk ${i + 1}/${chunksToProcess.length}`);
       
-      const system = `You are an expert SOP (Standard Operating Procedure) and regulatory compliance reviewer with deep expertise in:
-- ISO 9001:2015 Quality Management Systems
-- ISO 13485:2016 Medical Devices QMS
-- FDA 21 CFR Part 11 Electronic Records
-- EU GMP Guidelines
-- Industry best practices
+      const system = `You are an expert SOP reviewer with expertise in ISO 9001, ISO 13485, FDA 21 CFR Part 11, and EU GMP.
 
-Analyze through multiple lenses:
-✓ Regulatory Compliance
-✓ Operational Clarity
-✓ Risk Management
-✓ Process Effectiveness
-✓ Documentation Quality
+Review for: regulatory compliance, operational clarity, risk management, process effectiveness, documentation quality.
 
-Provide detailed, constructive, actionable feedback, in a well designed professional document.`;
+Provide concise, actionable feedback with specific recommendations.`;
 
-      const user = `REVIEW CRITERIA:\n${user_inputs}\n\nDOCUMENT SECTION:\n${chunks[i]}\n\nProvide comprehensive review with specific findings and recommendations.`;
+      const user = `CRITERIA: ${user_inputs}\n\nSECTION:\n${chunksToProcess[i]}\n\nProvide review.`;
       
       const result = await callClaude(system, user);
       processedChunks.push(result);
       
-      if (i < chunks.length - 1) {
-        await new Promise(r => setTimeout(r, 800));
+      // ✅ Reduced delay from 800ms to 300ms
+      if (i < chunksToProcess.length - 1) {
+        await new Promise(r => setTimeout(r, 300));
       }
     }
 
-    const claudePrimaryReview = processedChunks.join("\n\n═══════════════════════════════════════════════════\n\n");
-    console.log('Claude review complete. Length:', claudePrimaryReview.length);
+    const claudeReview = processedChunks.join("\n\n---\n\n");
+    console.log('Claude complete');
 
-    // GPT QA Review
-    console.log('Sending to GPT for QA...');
+    // GPT Enhancement
+    const gptSystem = `You are a Senior QA Editor for regulatory compliance documentation.
+
+Take the SOP review and produce the FINAL ENHANCED VERSION.
+
+✓ Preserve all findings
+✓ Correct errors
+✓ Add critical missed issues
+✓ Improve clarity and structure
+✓ Ensure regulatory precision
+
+Output the final SOP review document (not meta-commentary).`;
+
+    const gptUser = `REQUIREMENTS:\n${user_inputs}\n\nDOCUMENT:\n${truncatedDoc.substring(0, 20000)}\n\nPRIMARY REVIEW:\n${claudeReview}\n\nProduce FINAL ENHANCED review.`;
+
+    const finalReview = await callGPT(gptSystem, gptUser);
     
-    const gptSystem = `You are a Senior Quality Assurance Reviewer specializing in regulatory compliance and technical documentation.
-
-Perform rigorous secondary review (QA/QC) of the primary SOP analysis.
-
-Verify:
-✓ Accuracy of findings
-✓ Completeness - identify missed issues
-✓ Consistency of recommendations
-✓ Regulatory precision
-✓ Actionability
-
-Verify each finding (Verified/Partially/Not), list missed issues, give severity, actionable corrections, consistency check, regulatory precision notes, a quality score (0–100), and a prioritized 3-step roadmap. Preserve primary text verbatim; annotate with QA-IDs.`;
-
-    const gptUser = `ORIGINAL REQUIREMENTS:\n${user_inputs}\n\nORIGINAL DOCUMENT:\n${document_text.substring(0, 30000)}\n\nCLAUDE PRIMARY REVIEW:\n${claudePrimaryReview}\n\nProvide comprehensive QA review.`;
-
-    const gptFinalReview = await callGPT(gptSystem, gptUser);
-    
-    console.log('GPT QA complete. Length:', gptFinalReview.length);
-    console.log('=== SUCCESS ===');
+    console.log('=== Complete ===');
 
     return res.status(200).json({
       success: true,
-      ai_draft: claudePrimaryReview,
-      ai_output: gptFinalReview,
-      chunks_processed: chunks.length,
-      timestamp: new Date().toISOString(),
-      metadata: {
-        document_length: document_text.length,
-        user_inputs_length: user_inputs.length,
-        total_chunks: chunks.length,
-        model_used: {
-          primary: "claude-sonnet-4-20250514",
-          qa_reviewer: "gpt-4-turbo-preview"
-        }
-      }
+      ai_draft: claudeReview,
+      ai_output: finalReview,
+      chunks_processed: chunksToProcess.length,
+      document_truncated: document_text.length > maxDocLength,
+      timestamp: new Date().toISOString()
     });
 
   } catch (err) {
-    console.error('=== ERROR ===');
-    console.error('Message:', err.message);
-    console.error('Response:', err.response?.data);
-    
-    return res.status(500).json({ 
-      error: err.message,
-      details: err.response?.data || 'No additional details'
-    });
+    console.error('Error:', err.message);
+    return res.status(500).json({ error: err.message });
   }
 };
+
+
+Loading spinner (use an animated GIF or Bubble's loading bar)
