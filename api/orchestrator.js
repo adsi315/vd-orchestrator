@@ -2,7 +2,6 @@
 const axios = require('axios');
 const pdfParse = require('pdf-parse');       // npm install pdf-parse
 const mammoth = require('mammoth');          // npm install mammoth
-const fs = require('fs');
 
 // ------------------ API KEYS ------------------
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
@@ -14,7 +13,7 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 async function extractPDF(buffer) {
   try {
     const data = await pdfParse(buffer);
-    return data.text;
+    return data.text || '';
   } catch (err) {
     console.error('PDF extraction failed', err);
     return '';
@@ -25,7 +24,7 @@ async function extractPDF(buffer) {
 async function extractWord(buffer) {
   try {
     const { value } = await mammoth.extractRawText({ buffer });
-    return value;
+    return value || '';
   } catch (err) {
     console.error('Word extraction failed', err);
     return '';
@@ -97,21 +96,26 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  try {
-    let body;
-    if (req.headers['content-type']?.includes('application/json')) {
-      body = req.body;
-    } else {
-      // fallback: parse raw body manually
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      body = JSON.parse(Buffer.concat(chunks).toString());
-    }
+
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    const { uploaded_file, user_inputs = "", dropdown_selections = {}, proceed_to_arg = false } = req.body || {};
+    let body;
+    try {
+      // parse request body
+      body = req.body;
+      if (!body || Object.keys(body).length === 0) {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        body = JSON.parse(Buffer.concat(chunks).toString());
+      }
+    } catch (err) {
+      console.error('Failed to parse request body', err);
+      return res.status(400).json({ error: 'Invalid JSON in request body' });
+    }
+
+    const { uploaded_file, user_inputs = "", dropdown_selections = {}, proceed_to_arg = false } = body;
 
     let sourceText = user_inputs;
 
@@ -171,36 +175,27 @@ Instructions:
     // ------------------ GPT: Generate ARG RG JSON ------------------
     let argProcedures = [];
     if (proceed_to_arg) {
-      const procSystem = `You are an expert auditor. Extract all testable audit procedures from this Working Paper for a Bubble repeating group.
+      try {
+        const procSystem = `You are an expert auditor. Extract all testable audit procedures from this Working Paper for a Bubble repeating group.
 Return strictly JSON array following 5Cs: Criteria, Condition, Cause, Consequence, Conclusion.
 Example: [{"procedure":"...","sample_size":"...","department":"..."}]`;
-      const procUser = `Working Paper:
+
+        const procUser = `Working Paper:
 ${generatedWP}`;
 
-      const procResultRaw = await callGPT(procSystem, procUser);
-let procResultClean = procResultRaw
-  .trim()
-  .replace(/\n/g, '')        // remove line breaks
-  .replace(/,+}/g, '}')      // remove trailing commas
-  .replace(/,+]/g, ']');     // remove trailing commas
+        const procResultRaw = await callGPT(procSystem, procUser);
 
-try {
-  argProcedures = JSON.parse(procResultClean);
-} catch (err) {
-  console.warn("JSON parse failed, fallback to line array");
-  argProcedures = procResultRaw
-    .split(/\r?\n/)
-    .filter(line => line.trim())
-    .map(line => ({ procedure: line.trim() }));
-}
-      try {
-        argProcedures = JSON.parse(procResultRaw);
+        try {
+          argProcedures = JSON.parse(procResultRaw);
+        } catch (err) {
+          console.warn("JSON parse failed, fallback to line array");
+          argProcedures = procResultRaw
+            .split(/\r?\n/)
+            .filter(line => line.trim())
+            .map(line => ({ procedure: line.trim() }));
+        }
       } catch (err) {
-        console.warn("JSON parse failed, fallback to line array");
-        argProcedures = procResultRaw
-          .split(/\r?\n/)
-          .filter(line => line.trim())
-          .map(line => ({ procedure: line.trim() }));
+        console.error("Failed to generate ARG JSON", err);
       }
     }
 
