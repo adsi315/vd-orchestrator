@@ -3,8 +3,8 @@ const axios = require('axios');
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
-// Optimized chunking - smaller chunks = faster processing
-function chunkText(text, max = 5000) {  // ✅ Reduced from 8000 to 5000
+// Chunking function
+function chunkText(text, max = 8000) {
   const sentences = text.split(/(?<=[.!?])\s+/);
   let chunks = [];
   let current = "";
@@ -20,12 +20,15 @@ function chunkText(text, max = 5000) {  // ✅ Reduced from 8000 to 5000
   return chunks;
 }
 
+// Claude call
 async function callClaude(system, user) {
+  console.log('=== CLAUDE ===');
+  
   const { data } = await axios.post(
     "https://api.anthropic.com/v1/messages",
     {
       model: "claude-sonnet-4-20250514",
-      max_tokens: 8000,  // ✅ Reduced from 16000 for faster responses
+      max_tokens: 16000,
       system: system,
       messages: [{ role: "user", content: user }]
     },
@@ -37,10 +40,15 @@ async function callClaude(system, user) {
       }
     }
   );
+  
+  console.log('Claude done:', data.content[0].text.length);
   return data.content[0].text;
 }
 
+// GPT call
 async function callGPT(system, user) {
+  console.log('=== GPT ===');
+  
   const { data } = await axios.post(
     "https://api.openai.com/v1/chat/completions",
     {
@@ -59,9 +67,12 @@ async function callGPT(system, user) {
       }
     }
   );
+  
+  console.log('GPT done:', data.choices[0].message.content.length);
   return data.choices[0].message.content;
 }
 
+// Main handler
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -74,8 +85,9 @@ module.exports = async (req, res) => {
     const user_inputs = req.body?.user_inputs || '';
     const document_text = req.body?.document_text || '';
 
-    console.log('=== SOP Review Start ===');
-    console.log('Document length:', document_text.length);
+    console.log('=== START ===');
+    console.log('Inputs:', user_inputs.length);
+    console.log('Document:', document_text.length);
 
     if (!user_inputs || !document_text) {
       return res.status(400).json({ 
@@ -83,84 +95,104 @@ module.exports = async (req, res) => {
       });
     }
 
-    // ✅ Limit document size to prevent timeout
-    const maxDocLength = 40000;  // ~40KB of text (8-10 pages)
-    const truncatedDoc = document_text.length > maxDocLength 
-      ? document_text.substring(0, maxDocLength) + "\n\n[Document truncated for processing]"
-      : document_text;
+    // Chunk
+    const chunks = document_text.length > 10000 
+      ? chunkText(document_text, 8000) 
+      : [document_text];
 
-    // Chunk if needed
-    const chunks = truncatedDoc.length > 10000 
-      ? chunkText(truncatedDoc, 5000)  // Smaller chunks
-      : [truncatedDoc];
+    console.log(`${chunks.length} chunks`);
 
-    console.log(`Processing ${chunks.length} chunk(s)...`);
-
-    // ✅ Process only first 5 chunks to stay under 60 seconds
-    const chunksToProcess = chunks.slice(0, 5);
-    
-    if (chunks.length > 5) {
-      console.log(`Warning: Document has ${chunks.length} chunks, processing first 5 only`);
-    }
-
-    // Process chunks through Claude
+    // Claude processes chunks
     let processedChunks = [];
-    for (let i = 0; i < chunksToProcess.length; i++) {
-      console.log(`Chunk ${i + 1}/${chunksToProcess.length}`);
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(`Chunk ${i + 1}/${chunks.length}`);
       
-      const system = `You are an expert SOP reviewer with expertise in ISO 9001, ISO 13485, FDA 21 CFR Part 11, and EU GMP.
+      const system = `You are an expert SOP and regulatory compliance reviewer with expertise in ISO 9001, ISO 13485, FDA 21 CFR Part 11, and EU GMP.
 
-Review for: regulatory compliance, operational clarity, risk management, process effectiveness, documentation quality.
+Review this document section for:
+✓ Regulatory compliance
+✓ Operational clarity  
+✓ Risk management
+✓ Process effectiveness
+✓ Documentation quality
 
-Provide concise, actionable feedback with specific recommendations.`;
+Provide detailed, actionable feedback with specific recommendations.`;
 
-      const user = `CRITERIA: ${user_inputs}\n\nSECTION:\n${chunksToProcess[i]}\n\nProvide review.`;
+      const user = `REVIEW CRITERIA:
+${user_inputs}
+
+DOCUMENT SECTION:
+${chunks[i]}
+
+Provide comprehensive review with findings and recommendations.`;
       
       const result = await callClaude(system, user);
       processedChunks.push(result);
       
-      // ✅ Reduced delay from 800ms to 300ms
-      if (i < chunksToProcess.length - 1) {
-        await new Promise(r => setTimeout(r, 300));
+      if (i < chunks.length - 1) {
+        await new Promise(r => setTimeout(r, 500));
       }
     }
 
-    const claudeReview = processedChunks.join("\n\n---\n\n");
-    console.log('Claude complete');
+    const claudeReview = processedChunks.join("\n\n═══════════════════════════════════════════════════\n\n");
+    console.log('Claude total:', claudeReview.length);
 
-    // GPT Enhancement
-    const gptSystem = `You are a Senior QA Editor for regulatory compliance documentation.
+    // ✅ FIXED: GPT enhances the review (doesn't critique it)
+    console.log('GPT enhancing...');
+    
+    const gptSystem = `You are a Senior Documentation Quality Editor specializing in regulatory compliance.
 
-Take the SOP review and produce the FINAL ENHANCED VERSION.
+Your task: Take the SOP review below and produce an IMPROVED, FINAL VERSION of it.
 
-✓ Preserve all findings
-✓ Correct errors
-✓ Add critical missed issues
-✓ Improve clarity and structure
-✓ Ensure regulatory precision
+What to do:
+✓ Keep all the findings and recommendations
+✓ Fix any errors or inconsistencies 
+✓ Add any critical issues that were overlooked
+✓ Improve the structure and clarity
+✓ Ensure professional tone and regulatory precision
+✓ Make it more actionable and complete
 
-Output the final SOP review document (not meta-commentary).`;
+What NOT to do:
+✗ Do not write a critique about the review
+✗ Do not list what was "good" or "bad" 
+✗ Do not write meta-commentary like "The review covered..." or "Missing from the analysis..."
 
-    const gptUser = `REQUIREMENTS:\n${user_inputs}\n\nDOCUMENT:\n${truncatedDoc.substring(0, 20000)}\n\nPRIMARY REVIEW:\n${claudeReview}\n\nProduce FINAL ENHANCED review.`;
+OUTPUT: The enhanced final SOP review document itself - seamless and ready for the user.`;
+
+    const gptUser = `Original user requirements:
+${user_inputs}
+
+Original SOP document:
+${document_text.substring(0, 30000)}
+
+Review to enhance:
+${claudeReview}
+
+---
+
+Produce the final, enhanced version of this SOP review. Output the review document directly (not commentary about it).`;
 
     const finalReview = await callGPT(gptSystem, gptUser);
     
-    console.log('=== Complete ===');
+    console.log('=== DONE ===');
+    console.log('Final:', finalReview.length);
 
     return res.status(200).json({
       success: true,
       ai_draft: claudeReview,
       ai_output: finalReview,
-      chunks_processed: chunksToProcess.length,
-      document_truncated: document_text.length > maxDocLength,
+      chunks_processed: chunks.length,
       timestamp: new Date().toISOString()
     });
 
   } catch (err) {
-    console.error('Error:', err.message);
-    return res.status(500).json({ error: err.message });
+    console.error('=== ERROR ===');
+    console.error(err.message);
+    console.error(err.response?.data);
+    
+    return res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data
+    });
   }
 };
-
-
-Loading spinner (use an animated GIF or Bubble's loading bar)
