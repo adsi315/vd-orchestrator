@@ -178,7 +178,21 @@ Example: [{"procedure":"...","sample_size":"...","department":"..."}]`;
 ${generatedWP}`;
 
       const procResultRaw = await callGPT(procSystem, procUser);
+let procResultClean = procResultRaw
+  .trim()
+  .replace(/\n/g, '')        // remove line breaks
+  .replace(/,+}/g, '}')      // remove trailing commas
+  .replace(/,+]/g, ']');     // remove trailing commas
 
+try {
+  argProcedures = JSON.parse(procResultClean);
+} catch (err) {
+  console.warn("JSON parse failed, fallback to line array");
+  argProcedures = procResultRaw
+    .split(/\r?\n/)
+    .filter(line => line.trim())
+    .map(line => ({ procedure: line.trim() }));
+}
       try {
         argProcedures = JSON.parse(procResultRaw);
       } catch (err) {
