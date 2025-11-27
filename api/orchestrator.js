@@ -10,7 +10,7 @@ function chunkText(text, max = 8000) {
   const sentences = text.split(/(?<=[.!?])\s+/);
   let chunks = [];
   let current = "";
-  
+
   for (const s of sentences) {
     if ((current + s).length > max) {
       if (current.trim()) chunks.push(current.trim());
@@ -74,61 +74,71 @@ module.exports = async (req, res) => {
 
   try {
     const {
-      uploaded_wp = "",         
-      user_inputs = "",         
-      dropdown_selections = {}, 
-      proceed_to_arg = false    
+      uploaded_wp = "",          // Optional uploaded SOP
+      user_inputs = "",          // Optional manual input fields
+      dropdown_selections = {},  // Optional constraints
+      proceed_to_arg = false     // Populate ARG RG if true
     } = req.body || {};
 
     if (!uploaded_wp && !user_inputs) {
-      return res.status(400).json({ error: "At least uploaded_wp or user_inputs must be provided" });
+      return res.status(400).json({ error: "Provide at least uploaded_wp or user_inputs" });
     }
 
     // ------------------ PREPARE DOCUMENT ------------------
-    let sourceText = uploaded_wp ? uploaded_wp : user_inputs;
-
-    // Chunking if large
+    const sourceText = uploaded_wp ? uploaded_wp : user_inputs;
     const chunks = sourceText.length > 10000 ? chunkText(sourceText, 8000) : [sourceText];
-    let processedChunks = [];
+    let generatedChunks = [];
 
+    // ------------------ CLAUDE: Generate Audit Program ------------------
     for (let i = 0; i < chunks.length; i++) {
-      const system = `You are an expert auditor creating professional Working Papers. Focus on:
-- Clarity, actionability, professionalism
-- Reliability and informative content
-- Easy-to-follow structure
+      const system = `You are an expert auditor and working paper author. 
+Your task: Convert the provided SOP text or user inputs into a professional, testable audit program.
+Focus on:
+- Step-by-step audit procedures
+- Sample sizes where applicable
+- Responsible departments or roles
+- References to relevant policies, controls, or SOPs
+- Clear, actionable, auditable content
+- Suitable for auditors, compliance, risk, QA, IC, and department heads
+Output in **structured HTML**, with headings, lists, and tables for clarity.`;
 
-Incorporate optional user inputs or dropdown selections if provided.`;
       const userPrompt = `
-        Section ${i + 1} of ${chunks.length}:
+Section ${i + 1} of ${chunks.length}:
 
-        Text to process:
-        ${chunks[i]}
+Text to convert:
+${chunks[i]}
 
-        User dropdowns: ${JSON.stringify(dropdown_selections)}
+Additional user constraints:
+${JSON.stringify(dropdown_selections)}
 
-        Provide structured, clear, professional Working Paper content. Keep it easy to read and implement.
-      `;
+Instructions:
+- Translate policies/procedures into testable audit steps
+- Include sample sizes, responsible departments, and references
+- Organize logically by department or control area
+- Maintain professional and clear format
+`;
+
       const chunkResult = await callClaude(system, userPrompt);
-      processedChunks.push(chunkResult);
+      generatedChunks.push(chunkResult);
+
       if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 500));
     }
 
-    const generatedWP = processedChunks.join("\n\n");
+    const generatedWP = generatedChunks.join("\n\n");
 
-    // ------------------ OPTIONAL: Generate Procedures for ARG ------------------
+    // ------------------ OPTIONAL: Generate ARG Repeating Group Procedures ------------------
     let argProcedures = [];
     if (proceed_to_arg) {
-      const procSystem = `You are an expert auditor. Extract all audit procedures from this Working Paper for a Bubble repeating group.
-- Keep each procedure actionable
-- Follow the 5Cs: Criteria, Condition, Cause, Consequence, Conclusion
-- Return either strict JSON or a plain text list if JSON fails.`;
-      const procUser = `
-        Working Paper:
-        ${generatedWP}
-      `;
+      const procSystem = `You are an expert auditor. Extract all testable audit procedures from this Working Paper for a Bubble repeating group.
+- Follow 5Cs: Criteria, Condition, Cause, Consequence, Conclusion
+- Each procedure must be actionable and clear
+- Return JSON array of objects {procedure: "...", sample_size: "...", department: "..."} or fallback to text list`;
+
+      const procUser = `Working Paper:
+${generatedWP}`;
+
       const procResultRaw = await callGPT(procSystem, procUser);
 
-      // Use SOP reviewer-style safe parsing
       try {
         argProcedures = JSON.parse(procResultRaw);
       } catch (err) {
@@ -140,7 +150,7 @@ Incorporate optional user inputs or dropdown selections if provided.`;
       }
     }
 
-    // ------------------ FORMAT FINAL WP FOR DISPLAY ------------------
+    // ------------------ FORMAT FINAL HTML ------------------
     const finalDocument = `
 <!DOCTYPE html>
 <html>
@@ -160,7 +170,7 @@ strong { color:#2c3e50; font-weight:600;}
 </head>
 <body>
 <div class="header">
-<h1>📋 Generated Working Paper</h1>
+<h1>📋 Generated Audit Program</h1>
 <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
 <p><strong>Document Size:</strong> ${Math.round(sourceText.length/1024)} KB | <strong>Sections:</strong> ${chunks.length}</p>
 </div>
