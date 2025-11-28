@@ -1,12 +1,25 @@
 {
-  "name": "vd-orchestrator",
+  "name": "orchestrator-api",
   "version": "1.0.0",
+  "description": "Audit program orchestrator (Claude + GPT) - extracts text and generates working papers",
+  "main": "orchestrator.js",
   "scripts": {
-    "start": "node api/orchestrator.js"
+    "start": "node orchestrator.js",
+    "dev": "nodemon orchestrator.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "axios": "^1.6.0",
     "pdf-parse": "^1.1.1",
-    "mammoth": "^1.4.20"
-  }
+    "mammoth": "^1.4.20",
+    "lz-string": "^1.4.4"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
 }
