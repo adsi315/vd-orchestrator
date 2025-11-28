@@ -1,9 +1,13 @@
 const axios = require('axios');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
+const LZString = require("lz-string");
 
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+
+let rawText = body.document_text;
+let decompressed = LZString.decompressFromEncodedURIComponent(rawText);
 
 function chunkText(text, max = 8000) {
   const sentences = text.split(/(?<=[.!?])\s+/);
