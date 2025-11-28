@@ -99,6 +99,37 @@ module.exports = async (req, res) => {
     console.log('User inputs length:', user_inputs.length);
     console.log('Document text length:', document_text.length);
 
+    module.exports = async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+
+  try {
+
+    // ===== Extract text =====
+    let document_text = "";
+    let user_inputs = "";
+
+    if (typeof req.body === "string") {
+      document_text = req.body;
+    } else if (typeof req.body === "object") {
+      document_text = req.body.document_text || "";
+      user_inputs = req.body.user_inputs || "";
+    }
+
+    // ===== DECOMPRESS (if needed) =====
+    if (document_text.startsWith("COMPRESSED:")) {
+      let raw = document_text.replace("COMPRESSED:", "");
+      document_text = LZString.decompressFromEncodedURIComponent(raw) || "";
+    }
+
+    if (!document_text || !user_inputs) {
+      return res.status(400).json({ error: 'document_text and user_inputs are required' });
+    }
+
     // ======= CHUNK LARGE DOCUMENTS =======
     const chunks = document_text.length > 10000
       ? chunkText(document_text, 8000)
